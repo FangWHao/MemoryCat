@@ -12,7 +12,6 @@
 **MemoryCat** 是一个专为 macOS 设计的生产力工具，旨在帮助用户提升专注力并高效管理知识。它不仅仅是一个番茄钟，更是一个基于**艾宾浩斯遗忘曲线**的记忆辅助工具，同时还能自动记录你的应用使用时长，让你对自己的时间去向了如指掌。
 
 完全采用 **SwiftUI** + **SwiftData** 构建，拥有原生的 macOS 体验。
-<img width="300" alt="截屏2025-11-22 08 40 31" src="https://github.com/user-attachments/assets/f949cedb-2d30-4f69-94f4-89d3fbcd7f6f" />
 
 ## ✨ Key Features (核心功能)
 ### 📌 Menu Bar Companion (状态栏助手)
@@ -20,6 +19,7 @@
 - **Mini Timer**：提供极简版的番茄钟界面，不占用桌面空间也能随时查看剩余时间、控制暂停/开始。
 - **Quick Capture (闪念胶囊)**：突然有了灵感？无需打开主程序，在菜单栏窗口即可**快速录入**新的记忆卡片（支持文本/问答模式及标签），不错过任何稍纵即逝的想法。
 - **Seamless Sync**：利用 SwiftData 共享容器，状态栏与主窗口数据完全实时互通，无缝切换工作流。
+<img width="300" alt="截屏2025-11-22 08 40 31" src="https://github.com/user-attachments/assets/f949cedb-2d30-4f69-94f4-89d3fbcd7f6f" />
 
 
 ### 🍅 Focus Timer (专注番茄钟)
