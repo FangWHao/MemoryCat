@@ -44,6 +44,14 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220)
+            
+            // 👇👇👇【新增代码】在这里插入底部卡片 👇👇👇
+            .safeAreaInset(edge: .bottom) {
+                SidebarStatsCard()
+            }
+            // 👆👆👆【新增结束】👆👆👆
+            
+            
             .toolbar {
                 ToolbarItem {
                     Button(action: { showAddSheet = true }) { Label("新建", systemImage: "plus") }
@@ -1025,4 +1033,116 @@ struct PomodoroView: View {
 struct FilterChip: View {
     let title: String; let isSelected: Bool; let action: () -> Void
     var body: some View { Button(action: action) { Text(title).font(.subheadline).padding(.horizontal, 12).padding(.vertical, 6).background(isSelected ? Color.blue : Color(nsColor: .controlColor)).foregroundStyle(isSelected ? .white : .primary).clipShape(Capsule()).overlay(Capsule().stroke(Color.gray.opacity(0.2), lineWidth: 1)) }.buttonStyle(.plain) }
+}
+
+
+// MARK: - 🐱 左下角侧边栏统计卡片
+struct SidebarStatsCard: View {
+    // 1. 获取所有专注记录 (用于计算今日)
+    @Query var pomoRecords: [PomodoroRecord]
+    
+    // 2. 获取所有记忆条目 (用于计算待复习)
+    @Query var memoryItems: [MemoryItem]
+    
+    // 🗓️ 计算今日数据
+    var todayFocusMinutes: Int {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        let todayRecords = pomoRecords.filter { $0.date >= startOfToday }
+        return Int(todayRecords.reduce(0) { $0 + $1.duration } / 60)
+    }
+    
+    var todayFocusCount: Int {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        return pomoRecords.filter { $0.date >= startOfToday }.count
+    }
+    
+    var pendingReviewCount: Int {
+        // 截止到今天结束前的都算待复习
+        let endOfToday = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: Date()) ?? Date()
+        return memoryItems.filter { $0.nextReviewDate <= endOfToday }.count
+    }
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            // 标题栏
+            HStack {
+                Text("今日总览")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "bolt.fill")
+                    .font(.caption)
+                    .foregroundStyle(.yellow)
+            }
+            
+            // 数据三列布局
+            HStack(spacing: 0) {
+                // 1. 专注时长
+                StatColumn(
+                    value: "\(todayFocusMinutes)",
+                    unit: "分钟",
+                    icon: "hourglass",
+                    color: .blue
+                )
+                
+                Divider().frame(height: 20).padding(.horizontal, 8)
+                
+                // 2. 专注次数
+                StatColumn(
+                    value: "\(todayFocusCount)",
+                    unit: "次",
+                    icon: "flame.fill",
+                    color: .orange
+                )
+                
+                Divider().frame(height: 20).padding(.horizontal, 8)
+                
+                // 3. 待办/待复习
+                StatColumn(
+                    value: "\(pendingReviewCount)",
+                    unit: "待学",
+                    icon: "books.vertical.fill",
+                    color: .green
+                )
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial) // 磨砂玻璃质感
+                .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(.white.opacity(0.2), lineWidth: 1)
+        )
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10) // 离底部的距离
+    }
+}
+
+// 小小的列组件，复用代码让主视图更整洁
+struct StatColumn: View {
+    let value: String
+    let unit: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(color)
+                .frame(height: 16)
+            
+            Text(value)
+                .font(.system(.body, design: .rounded).bold())
+                .foregroundStyle(.primary)
+            
+            Text(unit)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
 }
