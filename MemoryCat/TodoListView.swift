@@ -122,22 +122,22 @@ struct TodoListView: View {
 struct TodoCard: View {
     @Bindable var todo: TodoItem
     @Environment(\.modelContext) var context
-
+    
     var mainColor: Color {
         if todo.isCompleted { return .gray }
         return todo.priority.color
     }
-
+    
     var backgroundColor: Color {
         if todo.isCompleted { return Color(nsColor: .windowBackgroundColor) }
         return todo.priority.color.opacity(0.05)
     }
-
+    
     @State private var isEditing = false    // 控制编辑弹窗
-
+    
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-
+            
             // 左侧圆圈（唯一点击切换完成状态的区域）
             Button(action: toggleStatus) {
                 ZStack {
@@ -154,10 +154,10 @@ struct TodoCard: View {
                 .contentShape(Circle())   // 扩大命中区域
             }
             .buttonStyle(.plain)
-
+            
             // 文本内容（双击进入编辑界面）
             VStack(alignment: .leading, spacing: 6) {
-
+                
                 Text(todo.content)
                     .font(.system(.headline, design: .rounded))
                     .foregroundStyle(todo.isCompleted ? .secondary : .primary)
@@ -166,7 +166,7 @@ struct TodoCard: View {
                     .onTapGesture(count: 2) {
                         isEditing = true
                     }
-
+                
                 HStack(spacing: 10) {
                     if !todo.isCompleted {
                         Text(todo.priority.title)
@@ -177,7 +177,7 @@ struct TodoCard: View {
                             .background(mainColor.opacity(0.15))
                             .clipShape(Capsule())
                     }
-
+                    
                     if let date = todo.dueDate {
                         Text(date.formatted(date: .numeric, time: .shortened))
                             .font(.caption2)
@@ -186,9 +186,9 @@ struct TodoCard: View {
                 }
             }
             .animation(.easeInOut, value: todo.isCompleted)
-
+            
             Spacer()
-
+            
             // 删除按钮
             Button {
                 context.delete(todo)
@@ -212,7 +212,7 @@ struct TodoCard: View {
             TodoEditorView(todo: todo)
         }
     }
-
+    
     private func toggleStatus() {
         todo.isCompleted.toggle()
     }

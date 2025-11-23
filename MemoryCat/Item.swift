@@ -50,7 +50,7 @@ final class MemoryItem {
     var interval: Int
     var repetition: Int
     var easeFactor: Double
-
+    
     init(type: ItemType, content: String, answer: String = "", tags: [String] = []) {
         self.id = UUID()
         self.type = type

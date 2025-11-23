@@ -21,7 +21,7 @@ struct ScreenTimeView: View {
     }
     
     var body: some View {
-
+        
         ScrollView {
             let _ = print("ScreenTimeView rendered at", Date())
             VStack(alignment: .leading, spacing: 24) {
@@ -280,7 +280,7 @@ struct DailyStatsView: View {
                     },
                     total: totalDuration
                 )
-
+                
                 
                 if dailyRecords.count > 20 {
                     Text("还有 \(dailyRecords.count - 20) 个应用未显示...")
@@ -334,11 +334,11 @@ struct WeeklyStatsView: View {
                 icon: records.first?.icon
             )
         }
-        .sorted { $0.duration > $1.duration }
+            .sorted { $0.duration > $1.duration }
         
         return Array(sorted.prefix(20))
     }
-
+    
     
     // 每日趋势数据
     struct DailyTotal: Identifiable {

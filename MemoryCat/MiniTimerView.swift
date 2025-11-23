@@ -80,6 +80,7 @@ struct MiniTimerView: View {
                     }
                     .pickerStyle(.segmented)
 
+                    // 使用修复后的输入框
                     RoundedEditor(text: $content)
 
                     if inputType == .qa {
@@ -143,12 +144,13 @@ struct MiniTimerView: View {
             .padding(.bottom, 10)
         }
         .frame(width: 320)
-        .background(.white) // 一个统一背景，去掉所有卡片
+        // 👇 修复1：改为使用系统窗口背景色，自动适配黑夜模式
+        .background(Color(nsColor: .windowBackgroundColor))
     }
+    
     func saveItem() {
         let tags = tagString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
         
-        // 👇 保存到全局状态
         globalState.lastUsedTags = tags
         
         let newItem = MemoryItem(type: inputType, content: content, answer: answer, tags: tags)
@@ -156,27 +158,31 @@ struct MiniTimerView: View {
         
         content = ""
         answer = ""
-        // 👇 标签保留，不用清空，方便连续输入同类内容！(或者您想清空也可以，但要记住 globalState)
-        // tagString = ""
         
         showAddForm = false
     }
 }
 
 
-// MARK: - 💠 复用组件（圆角编辑框）
+// MARK: - 💠 复用组件（圆角编辑框 - 已修复黑夜模式和遮挡问题）
 struct RoundedEditor: View {
     @Binding var text: String
     
     var body: some View {
+        // 👇 修复2：显式指定 Font，防止行高塌陷
         TextEditor(text: $text)
+            .font(.body)
+            .scrollContentBackground(.hidden) // 让 TextEditor 透明，以便显示下面的背景
             .frame(minHeight: 80, maxHeight: 200)
-            .padding(8)
+            .padding(8) // 这个 Padding 是给文字和边框之间的距离
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.gray.opacity(0.25))
-                    .background(.white)
-                    .cornerRadius(8)
+                    .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            // 👇 修复3：使用 textBackgroundColor，黑夜模式下是深色，白天是白色
+                            .fill(Color(nsColor: .textBackgroundColor))
+                    )
             )
     }
 }

@@ -18,7 +18,7 @@ struct MemoryCatApp: App {
             AppUsageRecord.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
+        
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
@@ -39,7 +39,7 @@ struct MemoryCatApp: App {
         MenuBarExtra {
             MiniTimerView()
                 .environmentObject(globalState)
-                // 👇 必须也用同一个容器，否则数据不互通！
+            // 👇 必须也用同一个容器，否则数据不互通！
                 .modelContainer(sharedModelContainer)
         } label: {
             let imageName = globalState.isTimerRunning ? "timer.circle.fill" : "timer"
