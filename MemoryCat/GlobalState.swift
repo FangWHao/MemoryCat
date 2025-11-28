@@ -6,12 +6,17 @@ import AppKit
 
 @MainActor
 class GlobalState: ObservableObject {
+    // MARK: - ⏱️ 计时器状态
     @Published var timerDuration: Double = 25 * 60
     @Published var timeRemaining: Double = 25 * 60
     @Published var isTimerRunning = false
+    @Published var isTimerPaused = false // ✨ 新增：暂停状态
     @Published var timerProgress: Double = 1.0
+    
+    // MARK: - 🏷️ 其他状态
     @Published var lastUsedTags: [String] = []
     
+    // MARK: - 🔧 内部变量
     private var monitorTimer: Timer?
     private let monitorInterval: TimeInterval = 30.0
     
@@ -22,6 +27,7 @@ class GlobalState: ObservableObject {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
     
+    // MARK: - 🖥️ 屏幕监控逻辑 (保持不变)
     func startScreenMonitoring(context: ModelContext) {
         self.sharedContext = context
         monitorTimer?.invalidate()
@@ -38,22 +44,20 @@ class GlobalState: ObservableObject {
         
         let bundleID = frontApp.bundleIdentifier ?? "unknown"
         
-        // 👇👇👇 新增：系统进程黑名单 👇👇👇
+        // 👇👇👇 系统进程黑名单 (保留你的逻辑) 👇👇👇
         let ignoredBundleIDs: Set<String> = [
             "com.apple.loginwindow",            // 登录窗口
-            "com.apple.systemuiserver",         // 系统UI服务 (顶部菜单栏图标等)
-            "com.apple.dock",                   // 底部 Dock 栏
+            "com.apple.systemuiserver",         // 系统UI服务
+            "com.apple.dock",                   // Dock
             "com.apple.controlcenter",          // 控制中心
             "com.apple.notificationcenterui",   // 通知中心
             "com.apple.WindowManager",          // 窗口管理
-            "com.apple.screencaptureui"         // 截图工具 (看个人喜好，通常也不算专注)
+            "com.apple.screencaptureui"         // 截图工具
         ]
         
-        // 如果是黑名单里的应用，直接忽略，不记录！
         if ignoredBundleIDs.contains(bundleID) {
             return
         }
-        
         
         let appName = frontApp.localizedName ?? "未知应用"
         
@@ -94,18 +98,33 @@ class GlobalState: ObservableObject {
         }
     }
     
+    // MARK: - ⏳ 番茄钟逻辑 (已增强)
+    
+    // ▶️ 开始计时
     func startTimer(context: ModelContext? = nil) {
         if let context = context { self.sharedContext = context }
-        guard !isTimerRunning else { return }
-        if timeRemaining <= 0 { resetTimer() }
-        isTimerRunning = true
         
+        // 如果已经在运行，就不重复启动
+        guard !isTimerRunning else { return }
+        
+        // 状态更新
+        isTimerRunning = true
+        isTimerPaused = false // ✨ 确保暂停状态被清除
+        
+        // 如果时间已耗尽，重置
+        if timeRemaining <= 0 { resetTimer() }
+        
+        // 启动计时器
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                
                 if self.timeRemaining > 0 {
                     self.timeRemaining -= 1
-                    self.timerProgress = self.timeRemaining / self.timerDuration
+                    // 重新计算进度 (0.0 - 1.0)
+                    if self.timerDuration > 0 {
+                        self.timerProgress = self.timeRemaining / self.timerDuration
+                    }
                 } else {
                     self.stopTimer(finished: true)
                 }
@@ -113,14 +132,31 @@ class GlobalState: ObservableObject {
         }
     }
     
+    // ⏸️ 暂停 (新逻辑)
     func pauseTimer() {
+        guard isTimerRunning else { return } // 只有在运行时才能暂停
         isTimerRunning = false
+        isTimerPaused = true // ✨ 设置为暂停态
+        
         timer?.invalidate()
         timer = nil
     }
     
+    // ▶️ 继续 (供新 UI 调用)
+    func resumeTimer() {
+        guard isTimerPaused else { return }
+        // 继续其实就是带着当前的 timeRemaining 重新 start
+        startTimer()
+    }
+    
+    // ⏹️ 停止/完成
     func stopTimer(finished: Bool, modelContext: ModelContext? = nil) {
-        pauseTimer()
+        // 先彻底停掉计时器
+        timer?.invalidate()
+        timer = nil
+        isTimerRunning = false
+        isTimerPaused = false // ✨ 重置暂停态
+        
         if finished {
             let ctx = modelContext ?? self.sharedContext
             if let context = ctx {
@@ -129,33 +165,50 @@ class GlobalState: ObservableObject {
                 try? context.save()
                 print("番茄钟记录已保存: \(timerDuration)s")
             }
-            let content = UNMutableNotificationContent()
-            content.title = "专注完成！"
-            content.body = "休息一下吧！"
-            content.sound = .default
-            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
+            sendNotification()
+            resetTimer() // 完成后重置回初始状态
+        } else {
+            // 如果是放弃，仅仅重置 UI，不保存
             resetTimer()
         }
     }
     
+    // 🔄 重置
     func resetTimer() {
-        pauseTimer()
+        timer?.invalidate()
+        timer = nil
+        isTimerRunning = false
+        isTimerPaused = false
         timeRemaining = timerDuration
         timerProgress = 1.0
     }
     
+    // ⚙️ 设置时长
     func setDuration(_ minutes: Double) {
+        // 只有未开始时才允许设置
+        guard !isTimerRunning else { return }
         timerDuration = minutes * 60
         resetTimer()
     }
     
+    // 🏷️ 标签逻辑
     func updateLastUsedTags(_ tagString: String) {
         let tags = tagString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         self.lastUsedTags = tags
     }
+    
+    // 🔔 发送通知辅助方法
+    private func sendNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "专注完成！"
+        content.body = "休息一下吧，你真棒！🐱"
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
 }
 
+// MARK: - 🖼️ 图片扩展 (保持不变)
 extension NSImage {
     func resize(to targetSize: CGSize) -> NSImage? {
         let newImage = NSImage(size: targetSize)

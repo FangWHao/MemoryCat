@@ -11,6 +11,7 @@ struct HomeDashboardView: View {
     @Environment(\.modelContext) var context
     @Environment(\.colorScheme) var colorScheme
     
+    // ✨ 这里我们需要一个 calendarManager 来给日程卡片用
     @StateObject private var calendarManager = CalendarManager()
     
     // 数据查询
@@ -29,12 +30,45 @@ struct HomeDashboardView: View {
     // 问候语
     var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
+        
+        let nightGreetings = [
+            "夜深了，注意休息喵 🌙",
+            "这么晚还不睡……主人要抱抱才能睡吗？(＞﹏＜)💤",
+            "猫娘在夜空里陪着你喵～早点休息才有精神捏 ✨",
+            "夜里凉凉的，主人要盖好被子哟 🛌"
+        ]
+        
+        let morningGreetings = [
+            "早安，今天也要元气满满！☀️",
+            "主人早早～猫娘给你准备了元气喵力 ✨",
+            "新的一天开始啦，摸摸头然后继续努力喵 ₍ᐢ •͈ ༝ •͈ ᐢ₎♡",
+            "早上好喵～喝水了吗？吃早饭了吗？ 🌅"
+        ]
+        
+        let afternoonGreetings = [
+            "下午好，保持专注哦 ☕️",
+            "主人下午也要继续努力！猫娘在旁边给你加油喵 💪",
+            "有点犯困的话伸伸懒腰吧～喵（=´∇｀=）",
+            "下午好哟～记得补充水分，别只忙工作喵！"
+        ]
+        
+        let eveningGreetings = [
+            "晚上好，今天过得怎么样？✨",
+            "辛苦啦主人～猫娘在这儿给你揉揉肩喵 (ﾉ>ω<)ﾉ",
+            "夜色舒服喵～要不要一起放松一下？🌙",
+            "晚上也要照顾好自己喵，不准太累 ✨"
+        ]
+        
+        let greetings: [String]
+        
         switch hour {
-        case 0..<6: return "夜深了，注意休息喵 🌙"
-        case 6..<12: return "早安，今天也要元气满满！☀️"
-        case 12..<18: return "下午好，保持专注哦 ☕️"
-        default: return "晚上好，今天过得怎么样？✨"
+        case 0..<6: greetings = nightGreetings
+        case 6..<12: greetings = morningGreetings
+        case 12..<18: greetings = afternoonGreetings
+        default: greetings = eveningGreetings
         }
+        
+        return greetings.randomElement() ?? ""
     }
     
     var todayFocusMinutes: Int {
@@ -74,7 +108,7 @@ struct HomeDashboardView: View {
                     // 2. Bento Grid 核心布局
                     HStack(alignment: .top, spacing: 20) {
                         
-                        // === 左侧列 (专注 + 日历) ===
+                        // === 左侧列 (专注 + 日程) ===
                         VStack(spacing: 20) {
                             // 2.1 专注卡片 (可交互)
                             InteractiveFocusCard(
@@ -85,11 +119,12 @@ struct HomeDashboardView: View {
                             )
                             .frame(height: 240)
                             
-                            // 2.2 小日历 (点击跳转)
+                            // 2.2 ✨ 日程列表卡片 (替换了原来的日历装饰)
+                            // 这里直接使用我们在 ScheduleListView.swift 里定义的组件
                             UpcomingScheduleCard(manager: calendarManager)
-                                             .frame(height: 400) 
+                                .frame(height: 400) // 给它足够的空间展示列表
                         }
-                        .frame(width: 320) // 固定左侧宽度
+                        .frame(maxWidth: .infinity) // 固定左侧宽度
                         
                         // === 右侧列 (任务列表 + 复习状态) ===
                         VStack(spacing: 20) {
@@ -105,12 +140,17 @@ struct HomeDashboardView: View {
                             
                             // 2.4 复习概览
                             ReviewStatusCard(
-                                dueCount: memoryItems.filter { $0.nextReviewDate <= Date() }.count,
-                                totalCount: memoryItems.count,
+                                // 👇 关键修改 1：待复习数量 = 到期 && 没归档
+                                dueCount: memoryItems.filter { $0.nextReviewDate <= Date() && !$0.isArchived }.count,
+                                
+                                // 👇 关键修改 2：总数量 = 没归档的所有卡片
+                                totalCount: memoryItems.filter { !$0.isArchived }.count,
+                                
                                 onTap: { tabSelection = .review }
                             )
                             .frame(height: 160)
                         }
+                        .frame(maxWidth: .infinity)
                     }
                 }
                 .padding(40)
@@ -129,7 +169,7 @@ struct HomeDashboardView: View {
             globalState.pauseTimer()
         } else {
             // 默认 25 分钟开始
-            if globalState.timeRemaining <= 0 { globalState.timeRemaining = 25 * 60 }
+            if globalState.timeRemaining <= 0 { globalState.timeRemaining = 45 * 60 }
             globalState.startTimer(context: context)
         }
     }
@@ -140,13 +180,6 @@ struct HomeDashboardView: View {
             // 稍微延迟保存，让动画飞一会儿
             try? context.save()
         }
-    }
-    
-    // 临时 helper，如果 Calendar 在 AppMode 里，这里可能需要发通知或者用 Binding 切换 AppMode
-    // 这里简单示意跳转
-    func appModeSwitch() {
-        // 如果你有 appMode 的 Binding 也可以传进来切换
-        print("Jump to calendar")
     }
 }
 
@@ -289,14 +322,18 @@ struct TaskListCard: View {
 }
 
 // 单行任务组件
+// 在 HomeDashboardView.swift 中
+
 struct DashboardTaskRow: View {
     let todo: TodoItem
     let onComplete: () -> Void
+    
     @State private var isHovering = false
+    @State private var showAttachmentsPopover = false // ✨ 新增：控制气泡
     
     var body: some View {
         HStack(spacing: 12) {
-            // 勾选圈
+            // 1. 勾选圈 (保持不变)
             Button(action: onComplete) {
                 Circle()
                     .stroke(todo.priority.color, lineWidth: 2)
@@ -307,16 +344,48 @@ struct DashboardTaskRow: View {
             }
             .buttonStyle(.plain)
             
-            VStack(alignment: .leading, spacing: 2) {
+            // 2. 中间信息区
+            VStack(alignment: .leading, spacing: 4) {
+                // 任务内容
                 Text(todo.content)
                     .font(.system(size: 14))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 
-                if let due = todo.dueDate {
-                    Text(due.formatted(date: .numeric, time: .shortened))
-                        .font(.caption2)
-                        .foregroundStyle(due < Date() ? .red : .secondary)
+                // 信息行：截止时间 + 附件图标
+                HStack(spacing: 8) {
+                    // 截止时间
+                    if let due = todo.dueDate {
+                        Text(due.formatted(date: .numeric, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(due < Date() ? .red : .secondary)
+                    }
+                    
+                    // ✨✨✨ 附件小图标 (点击弹出气泡) ✨✨✨
+                    if !todo.attachments.isEmpty {
+                        Button {
+                            showAttachmentsPopover = true
+                        } label: {
+                            HStack(spacing: 2) {
+                                Image(systemName: "paperclip")
+                                Text("\(todo.attachments.count)")
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.blue) // 用蓝色突出一点，表示可点
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { isHover in
+                            if isHover { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                        }
+                        // 复用 TodoListView 里写的 AttachmentPopoverList
+                        .popover(isPresented: $showAttachmentsPopover, arrowEdge: .trailing) {
+                            AttachmentPopoverList(attachments: todo.attachments)
+                        }
+                    }
                 }
             }
             
@@ -329,81 +398,6 @@ struct DashboardTaskRow: View {
     }
 }
 
-// 3. 迷你日历卡片 (纯展示 + 装饰)
-struct DashboardCalendarCard: View {
-    let calendar = Calendar.current
-    let today = Date()
-    
-    // 生成当前周的日期
-    var currentWeek: [Date] {
-        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today))!
-        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: startOfWeek) }
-    }
-    
-    var body: some View {
-        HomeCardBase {
-            VStack(spacing: 0) {
-                // 红色顶部装饰
-                Rectangle()
-                    .fill(LinearGradient(colors: [.red, .orange], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(height: 6)
-                
-                VStack(alignment: .leading, spacing: 16) {
-                    // 月份大标题
-                    HStack {
-                        Text(today.formatted(.dateTime.month(.wide)))
-                            .font(.title2.bold())
-                            .foregroundStyle(.red)
-                        Spacer()
-                        Text(today.formatted(.dateTime.year()))
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    // 大大的"今天"
-                    HStack(alignment: .lastTextBaseline, spacing: 4) {
-                        Text(today.formatted(.dateTime.day()))
-                            .font(.system(size: 72, weight: .bold, design: .rounded))
-                            .foregroundStyle(.primary)
-                        Text(today.formatted(.dateTime.weekday(.wide)))
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    // 底部：本周小圆点
-                    HStack(spacing: 0) {
-                        ForEach(currentWeek, id: \.self) { date in
-                            VStack(spacing: 4) {
-                                Text(date.formatted(.dateTime.weekday(.narrow)))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                
-                                ZStack {
-                                    if calendar.isDateInToday(date) {
-                                        Circle().fill(Color.red)
-                                    } else {
-                                        Circle().fill(Color.gray.opacity(0.1))
-                                    }
-                                }
-                                .frame(width: 24, height: 24)
-                                .overlay(
-                                    Text(date.formatted(.dateTime.day()))
-                                        .font(.caption2.bold())
-                                        .foregroundStyle(calendar.isDateInToday(date) ? .white : .primary)
-                                )
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .padding(.top, 10)
-                }
-                .padding(24)
-            }
-        }
-    }
-}
 
 // 4. 复习状态卡片
 struct ReviewStatusCard: View {
@@ -496,10 +490,8 @@ struct QuickNavBtn: View {
     }
 }
 
-// ⚠️ 别忘了保留 BackgroundBlobs 和 HomeCardBase
-// (如果之前文件里有，这里可以不重复写；如果没有，请保留之前的代码)
-
 // MARK: - 🎨 基础样式封装 (Glassmorphism)
+// (保留原来的 HomeCardBase 和 BackgroundBlobs 代码，这里没变)
 struct HomeCardBase<Content: View>: View {
     @Environment(\.colorScheme) var colorScheme
     @ViewBuilder var content: Content
@@ -508,12 +500,11 @@ struct HomeCardBase<Content: View>: View {
     
     var body: some View {
         ZStack {
-            // 背景层：根据日夜模式调整
+            // 背景层
             RoundedRectangle(cornerRadius: 24)
                 .fill(colorScheme == .dark ? .ultraThinMaterial : .regularMaterial)
                 .opacity(colorScheme == .dark ? 0.8 : 0.6)
             
-            // 纯白模式下的底色增强
             if colorScheme == .light {
                 RoundedRectangle(cornerRadius: 24)
                     .fill(Color.white.opacity(0.5))
@@ -533,7 +524,6 @@ struct HomeCardBase<Content: View>: View {
                     lineWidth: 1
                 )
         )
-        // 阴影和悬浮效果
         .shadow(color: Color.black.opacity(isHovering ? 0.15 : 0.05), radius: isHovering ? 20 : 10, y: isHovering ? 10 : 5)
         .scaleEffect(isHovering ? 1.02 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovering)
@@ -541,30 +531,25 @@ struct HomeCardBase<Content: View>: View {
     }
 }
 
-// 背景光斑组件
 struct BackgroundBlobs: View {
     @Binding var animate: Bool
     
     var body: some View {
         ZStack {
-            // 基础底色
             Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
             
-            // 光斑1: 蓝色
             Circle()
                 .fill(Color.blue.opacity(0.15))
                 .frame(width: 500, height: 500)
                 .blur(radius: 100)
                 .offset(x: animate ? -200 : 0, y: animate ? -200 : -100)
             
-            // 光斑2: 紫色
             Circle()
                 .fill(Color.purple.opacity(0.15))
                 .frame(width: 400, height: 400)
                 .blur(radius: 100)
                 .offset(x: animate ? 200 : 100, y: animate ? 100 : 200)
             
-            // 光斑3: 橙色 (活跃感)
             Circle()
                 .fill(Color.orange.opacity(0.1))
                 .frame(width: 300, height: 300)

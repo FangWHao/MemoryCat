@@ -53,8 +53,19 @@ struct ContentView: View {
                             .tag(SidebarItem.focus).foregroundStyle((globalState.isTimerRunning && selection != .focus) ? .green : .primary)
                         Label("待办清单", systemImage: "checkmark.square.fill").tag(SidebarItem.todo).foregroundStyle(.blue)
                     }
+
                     Section("Calendar") {
-                        Button { withAnimation(.easeInOut(duration: 0.2)) { appMode = .calendar } } label: { Label("日程日历", systemImage: "calendar").foregroundStyle(.primary) }.buttonStyle(.plain)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { appMode = .calendar }
+                        } label: {
+                            Label("日程日历", systemImage: "calendar")
+                                .foregroundStyle(.primary)
+                                // 👇 1. 让标签内容横向撑满无限宽，并靠左对齐
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                // 👇 2. 关键！定义点击区域为整个矩形（包括空白处），否则只能点到文字
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                     Section("Memory") { Label("复习", systemImage: "brain.head.profile").tag(SidebarItem.review); Label("知识库", systemImage: "books.vertical").tag(SidebarItem.allList) }
                     Section("Data") { Label("学习统计", systemImage: "chart.xyaxis.line").tag(SidebarItem.stats); Label("屏幕时间", systemImage: "laptopcomputer").tag(SidebarItem.screenTime) }
@@ -416,16 +427,19 @@ struct ReviewSessionView: View {
     
     var potentialItems: [MemoryItem] {
         let timeFilteredItems: [MemoryItem]
+        let activeItems = allItems.filter { !$0.isArchived }
+        
+        
         switch reviewMode {
         case .dueToday:
             let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: .now) ?? .now
-            timeFilteredItems = allItems.filter { $0.nextReviewDate <= endOfDay }
+            timeFilteredItems = activeItems.filter { $0.nextReviewDate <= endOfDay }
         case .new24h:
             let yesterday = Date.now.addingTimeInterval(-86400)
-            timeFilteredItems = allItems.filter { $0.createdDate >= yesterday }
+            timeFilteredItems = activeItems.filter { $0.createdDate >= yesterday }
         case .reviewAhead:
             let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: .now) ?? .now
-            timeFilteredItems = Array(allItems.filter { $0.nextReviewDate > endOfDay }.prefix(20))
+            timeFilteredItems = Array(activeItems.filter { $0.nextReviewDate > endOfDay }.prefix(20))
         }
         
         if selectedTags.isEmpty { return timeFilteredItems }
@@ -1264,6 +1278,13 @@ struct AllItemsListView: View {
                 Label("移入归档", systemImage: "archivebox")
             }
             .buttonStyle(.bordered)
+            
+            Button(role: .destructive) {
+                        deletePermanently()
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered) // 或者用 borderedProminent 如果想醒目一点
         } else {
             Button {
                 toggleArchiveStatus(to: false)
@@ -1792,198 +1813,239 @@ struct ActionBtn: View {
     var body: some View { Button(action: action) { VStack(spacing: 8) { ZStack { Circle().fill(color).frame(width: 64, height: 64).shadow(color: color.opacity(0.4), radius: 8, y: 4); Image(systemName: icon).font(.title2.bold()).foregroundStyle(.white) }.scaleEffect(h ? 1.1 : 1.0).animation(.spring(), value: h); Text(label).font(.callout.bold()).foregroundStyle(color) } }.buttonStyle(.plain).onHover { h = $0 } }
 }
 
-struct BigControlBtn: View {
-    let icon: String; let label: String; let color: Color; let action: () -> Void
-    @State private var h = false
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(color.opacity(h ? 0.2 : 0.1)).frame(width: 80, height: 80)
-                    Image(systemName: icon).font(.system(size: 36, weight: .medium)).foregroundStyle(color)
-                }
-                .scaleEffect(h ? 1.05 : 1.0).animation(.spring(), value: h)
-                // 修复 Font.body.medium 报错
-                Text(label).font(.body).fontWeight(.medium).foregroundStyle(.secondary)
-            }
-        }.buttonStyle(.plain).onHover { h = $0 }
-    }
-}
 
-//struct AddItemView: View {
-//    @Environment(\.modelContext) var context
-//    @Environment(\.dismiss) var dismiss
-//    // 👇 引入全局状态
-//    @EnvironmentObject var globalState: GlobalState
-//
-//    @State private var t: ItemType = .textOnly
-//    @State private var c = ""
-//    @State private var a = ""
-//    @State private var tag = ""
-//
-//    var body: some View {
-//        Form {
-//            Picker("类型", selection: $t) {
-//                Text("文本").tag(ItemType.textOnly)
-//                Text("Q&A").tag(ItemType.qa)
-//            }
-//            .pickerStyle(.segmented)
-//
-//            // 👇👇👇 修改这里：使用 Section 分组，视觉更清晰
-//            Section("内容信息") {
-//                TextField("输入内容", text: $c, axis: .vertical)
-//                    .lineLimit(3...8) // 默认3行，最大8行
-//                    .textFieldStyle(.roundedBorder) // 放在 Form 里最好用 plain
-//                    .padding(.vertical, 4)
-//
-//                if t == .qa {
-//                    Divider() // 加一条线隔开
-//                    TextField("输入答案", text: $a, axis: .vertical)
-//                        .lineLimit(3...8)
-//                        .textFieldStyle(.roundedBorder)
-//                        .padding(.vertical, 4)
-//                }
-//            }
-//
-//            Section("分类") {
-//                TextField("标签 (逗号分隔)", text: $tag)
-//            }
-//
-//            HStack {
-//                Button("取消") { dismiss() }
-//                Button("保存") {
-//                    // ... 保存逻辑不变 ...
-//                }
-//                .buttonStyle(.borderedProminent)
-//                .disabled(c.isEmpty)
-//            }
-//        }
-//        .padding()
-//        .frame(width: 450) //稍微加宽一点点
-//        .onAppear {
-//            if !globalState.lastUsedTags.isEmpty {
-//                tag = globalState.lastUsedTags.joined(separator: ", ")
-//            }
-//        }
-//    }
-//}
 struct AddItemView: View {
-    @Environment(\.modelContext) var context
     @Environment(\.dismiss) var dismiss
+    @Environment(\.modelContext) private var modelContext
+    
+    // 👇 1. 引入全局状态，为了读取和保存 lastUsedTags
     @EnvironmentObject var globalState: GlobalState
     
-    @State private var t: ItemType = .textOnly
-    @State private var c = ""
-    @State private var a = ""
-    @State private var tag = ""
+    // 查询数据库获取标签云
+    @Query private var allItems: [MemoryItem]
+    
+    @State private var itemType: ItemType = .textOnly
+    @State private var content: String = ""
+    @State private var answer: String = ""
+    @State private var tagString: String = ""
+    
+    // 计算已有的标签 (去重 + 排序)
+    var existingTags: [String] {
+        Array(Set(allItems.flatMap { $0.tags })).sorted()
+    }
+    
+    // 当前输入的标签数组
+    var currentTags: [String] {
+        tagString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+    }
     
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
             
-            // Picker 顶部横条
-            Picker("类型", selection: $t) {
-                Text("文本").tag(ItemType.textOnly)
-                Text("Q&A").tag(ItemType.qa)
+            // MARK: - 顶部标题区
+            ZStack {
+                Text("新建记录")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+            }
+            .padding(.top, 20)
+            .padding(.bottom, 10)
+            
+            // 类型选择器
+            Picker("类型", selection: $itemType) {
+                Text("文本笔记").tag(ItemType.textOnly)
+                Text("Q&A 问答").tag(ItemType.qa)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.top, 10)
+            .frame(width: 200)
+            .padding(.bottom, 20)
             
-            // 内容输入卡片
-            VStack(alignment: .leading, spacing: 12) {
-                Text("内容")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                
-                RoundedTextEditor(text: $c, minHeight: 120)
-                
-                if t == .qa {
-                    Divider().padding(.vertical, 4)
+            // MARK: - 滚动内容区
+            ScrollView {
+                VStack(spacing: 20) {
                     
-                    Text("答案")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // 1. 内容 / 问题 输入框
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(itemType == .textOnly ? "内容" : "问题 (Question)", systemImage: itemType == .textOnly ? "doc.text" : "questionmark.circle")
+                            .font(.caption).bold()
+                            .foregroundStyle(.secondary)
+                        
+                        ModernTextEditor(text: $content, placeholder: itemType == .textOnly ? "输入详细内容..." : "输入问题描述...")
+                            .frame(minHeight: 100)
+                    }
                     
-                    RoundedTextEditor(text: $a, minHeight: 120)
+                    // 2. 答案输入框 (仅 Q&A 模式显示)
+                    if itemType == .qa {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("答案 (Answer)", systemImage: "lightbulb")
+                                .font(.caption).bold()
+                                .foregroundStyle(.secondary)
+                            
+                            ModernTextEditor(text: $answer, placeholder: "输入答案或解析...")
+                                .frame(minHeight: 100)
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
+                    // 3. 🏷️ 标签系统
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("标签", systemImage: "tag")
+                                .font(.caption).bold()
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            // 可选：加个小字提示
+                            if !tagString.isEmpty {
+                                Text("已自动填入上次标签")
+                                    .font(.caption2)
+                                    .foregroundStyle(.blue)
+                                    .opacity(0.8)
+                            }
+                        }
+                        
+                        // 标签输入框
+                        TextField("输入标签，用逗号分隔...", text: $tagString)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                        
+                        // 标签云
+                        if !existingTags.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(existingTags, id: \.self) { tag in
+                                        TagChipView(
+                                            title: tag,
+                                            isSelected: currentTags.contains(tag)
+                                        ) {
+                                            toggleTag(tag)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 2)
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 24)
             }
-            .padding(20)
-            .background(.white)
-            .cornerRadius(16)
-            .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
-            .padding(.horizontal)
             
-            // 标签卡片
-            VStack(alignment: .leading, spacing: 8) {
-                Text("标签（逗号分隔）")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                
-                TextField("", text: $tag)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(20)
-            .background(.white)
-            .cornerRadius(16)
-            .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
-            .padding(.horizontal)
+            Divider()
             
-            // 按钮
+            // MARK: - 底部按钮栏
             HStack {
                 Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 
                 Spacer()
                 
-                Button("保存") {
-                    saveItem()
-                    dismiss()
+                Button(action: saveItem) {
+                    Text("保存记录")
+                        .padding(.horizontal, 10)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(c.trimmingCharacters(in: .whitespaces).isEmpty)
+                .keyboardShortcut(.defaultAction)
+                .disabled(content.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.horizontal)
+            .padding(20)
+            .background(.ultraThinMaterial)
         }
-        .padding(.bottom, 20)
-        .frame(width: 520)
+        .frame(width: 500, height: 600)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: itemType)
+        // 👇 2. 核心修改：窗口出现时，读取上次的标签
         .onAppear {
             if !globalState.lastUsedTags.isEmpty {
-                tag = globalState.lastUsedTags.joined(separator: ", ")
+                tagString = globalState.lastUsedTags.joined(separator: ", ")
             }
         }
+    }
+    
+    // MARK: - 逻辑方法
+    
+    func toggleTag(_ tag: String) {
+        var tags = currentTags
+        if tags.contains(tag) {
+            tags.removeAll { $0 == tag }
+        } else {
+            tags.append(tag)
+        }
+        tagString = tags.joined(separator: ", ")
     }
     
     func saveItem() {
-        let tagList = tag
-            .split(separator: ",")
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-        let newItem = MemoryItem(
-            type: t,
-            content: c,
-            answer: t == .qa ? a : "",
-            tags: tagList
-        )
-        context.insert(newItem)
-        try? context.save()
-        globalState.updateLastUsedTags(tag)
+        let finalTags = currentTags.filter { !$0.isEmpty }
+        
+        // 👇 3. 核心修改：保存成功时，更新全局状态里的“上次标签”
+        globalState.lastUsedTags = finalTags
+        
+        let newItem = MemoryItem(type: itemType, content: content, answer: answer, tags: finalTags)
+        
+        modelContext.insert(newItem)
+        try? modelContext.save()
+        dismiss()
     }
 }
+// MARK: - ✨ 高颜值子组件
 
-
-struct RoundedTextEditor: View {
+// 1. 现代感输入框 (复用之前的优秀设计)
+struct ModernTextEditor: View {
     @Binding var text: String
-    var minHeight: CGFloat = 100
+    var placeholder: String
     
     var body: some View {
-        TextEditor(text: $text)
-            .frame(minHeight: minHeight)
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.gray.opacity(0.25))
-            )
-            .background(.white)
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .textBackgroundColor))
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+            
+            if text.isEmpty {
+                Text(placeholder)
+                    .foregroundStyle(.tertiary)
+                    .padding(12)
+                    .allowsHitTesting(false)
+            }
+            
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(.clear)
+        }
     }
 }
+
+// 2. 标签胶囊组件 (稍微改得比 Mini 版更大一点，适合桌面端)
+struct TagChipView: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.medium)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isSelected ? Color.blue : Color.primary.opacity(0.05))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? .blue.opacity(0.5) : .primary.opacity(0.1), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isSelected ? 1.05 : 1.0) // 选中时微微放大
+        .animation(.snappy, value: isSelected)
+    }
+}
+
+
 
 // MARK: - ✨ 美化后的编辑界面 (最终版)
 struct EditItemView: View {
@@ -2303,137 +2365,6 @@ struct InfoCell: View {
     }
 }
 
-// 📄 ContentView.swift -> 替换整个 PomodoroView
-
-struct PomodoroView: View {
-    @EnvironmentObject var globalState: GlobalState
-    @Environment(\.modelContext) var modelContext
-    
-    // 👇 1. 新增：获取所有专注记录，用于统计
-    @Query(sort: \PomodoroRecord.date) var records: [PomodoroRecord]
-    
-    @State private var inputDuration: Double = 25
-    @State private var showStopAlert = false
-    
-    // 👇 2. 新增：计算今日专注时长 (分钟)
-    var todayMinutes: Int {
-        let startOfToday = Calendar.current.startOfDay(for: Date())
-        let todayRecords = records.filter { $0.date >= startOfToday }
-        return Int(todayRecords.reduce(0) { $0 + $1.duration } / 60)
-    }
-    
-    var body: some View {
-        VStack(spacing: 50) {
-            // 🕒 倒计时圆环区域
-            ZStack {
-                // 底圈
-                Circle()
-                    .stroke(lineWidth: 20)
-                    .opacity(0.1)
-                    .foregroundStyle(Color.primary)
-                
-                // 进度圈
-                Circle()
-                    .trim(from: 0.0, to: globalState.timerProgress)
-                    .stroke(
-                        AngularGradient(gradient: Gradient(colors: [.blue, .cyan, .mint, .green, .blue]), center: .center),
-                        style: StrokeStyle(lineWidth: 20, lineCap: .round)
-                    )
-                    .rotationEffect(Angle(degrees: 270.0))
-                    .animation(.linear(duration: 1.0), value: globalState.timerProgress)
-                    .shadow(color: .blue.opacity(0.3), radius: 10)
-                
-                // 中间文字
-                VStack(spacing: 8) {
-                    // 倒计时数字
-                    Text(String(format: "%02d:%02d", Int(globalState.timeRemaining)/60, Int(globalState.timeRemaining)%60))
-                        .font(.system(size: 80, weight: .light, design: .monospaced))
-                        .contentTransition(.numericText())
-                    
-                    // 👇👇👇 修改这里：显示今日专注时长
-                    if globalState.isTimerRunning {
-                        // 专注中：显示状态
-                        Text("FOCUS MODE")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.secondary)
-                            .padding(4)
-                            .background(Capsule().fill(Color.green.opacity(0.2)))
-                    } else {
-                        // 未开始：显示今日累计
-                        HStack(spacing: 4) {
-                            Image(systemName: "flame.fill")
-                                .foregroundStyle(.orange)
-                            Text("今日累计: \(todayMinutes) min")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-            }
-            .frame(width: 320, height: 320)
-            .padding(.top, 20)
-            
-            // 🎮 控制区域
-            VStack(spacing: 30) {
-                // 只有未开始时才显示时间设置
-                if !globalState.isTimerRunning {
-                    HStack {
-                        Text("专注时长").foregroundStyle(.secondary)
-                        TextField("25", value: $inputDuration, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.center)
-                        Text("分钟").foregroundStyle(.secondary)
-                    }
-                    .onChange(of: inputDuration) { _, n in
-                        globalState.setDuration(n)
-                    }
-                } else {
-                    // 专注中显示一句鼓励的话
-                    Text("加油！保持专注喵！🐱")
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .frame(height: 24) // 占位防止跳动
-                }
-                
-                // 按钮组
-                HStack(spacing: 50) {
-                    if globalState.isTimerRunning {
-                        BigControlBtn(icon: "pause.fill", label: "暂停", color: .orange) {
-                            globalState.pauseTimer()
-                        }
-                        
-                        BigControlBtn(icon: "stop.fill", label: "放弃", color: .red) {
-                            showStopAlert = true
-                        }
-                    } else {
-                        BigControlBtn(icon: "play.fill", label: "开始", color: .green) {
-                            // 确保开始前同步时间
-                            globalState.setDuration(inputDuration)
-                            // 传入 context 以便保存
-                            globalState.startTimer(context: modelContext)
-                        }
-                    }
-                }
-            }
-        }
-        .padding()
-        .onAppear {
-            // 每次进来把时间同步给输入框
-            inputDuration = globalState.timerDuration / 60
-        }
-        .alert("要放弃吗？", isPresented: $showStopAlert) {
-            Button("继续专注", role: .cancel) { }
-            Button("结束", role: .destructive) {
-                globalState.stopTimer(finished: false)
-            }
-        } message: {
-            Text("放弃的话，这次的努力就不会被记录咯😿")
-        }
-    }
-}
 
 struct FilterChip: View {
     let title: String; let isSelected: Bool; let action: () -> Void
