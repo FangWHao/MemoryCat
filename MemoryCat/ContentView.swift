@@ -1,79 +1,130 @@
+// 📄 ContentView.swift
 import SwiftUI
 import SwiftData
 import Charts
 import UniformTypeIdentifiers
+import EventKit
+
+enum CalendarViewMode: String, CaseIterable {
+    case day = "日"
+    case week = "周"
+    case month = "月"
+}
+
+enum AppMode {
+    case standard // 标准模式
+    case calendar // 日历模式
+}
 
 struct ContentView: View {
     @EnvironmentObject var globalState: GlobalState
     @Environment(\.modelContext) var modelContext
+    @Query var todos: [TodoItem]
     
-    @State private var selection: SidebarItem? = .focus
+    @StateObject private var calendarManager = CalendarManager()
+    @StateObject private var eventEditState = EventEditState()
+    
+    @State private var appMode: AppMode = .standard
+    @State private var calendarViewMode: CalendarViewMode = .day
+    @State private var calendarCurrentDate = Date()
+    @State private var selection: SidebarItem? = .home
     @State private var showAddSheet = false
     
     enum SidebarItem {
+        case home       // 👈 新增
         case focus
         case todo
         case review
         case allList
         case stats
-        case screenTime // 👈 1. 新增枚举
+        case screenTime
     }
     
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
-                Section("Focus") {
-                    Label(globalState.isTimerRunning ? "专注中" : "番茄钟",
-                          systemImage: globalState.isTimerRunning ? "timer.circle.fill" : "timer")
-                    .tag(SidebarItem.focus)
-                    // 修复逻辑：只有在 [没被选中] 且 [倒计时运行中] 时才变绿
-                    // 否则使用 .primary (选中时系统会自动处理成高对比度的白色)
-                    .foregroundStyle(
-                        (globalState.isTimerRunning && selection != .focus) ? .green : .primary
-                    )
-                    Label("待办清单", systemImage: "checkmark.square.fill")
-                        .tag(SidebarItem.todo)
-                        .foregroundStyle(.blue)
+            if appMode == .standard {
+                List(selection: $selection) {
+                    Section {
+                        Label("主页", systemImage: "house.fill")
+                            .tag(SidebarItem.home)
+                    }
+                    Section("Focus") {
+                        Label(globalState.isTimerRunning ? "专注中" : "番茄钟", systemImage: globalState.isTimerRunning ? "timer.circle.fill" : "timer")
+                            .tag(SidebarItem.focus).foregroundStyle((globalState.isTimerRunning && selection != .focus) ? .green : .primary)
+                        Label("待办清单", systemImage: "checkmark.square.fill").tag(SidebarItem.todo).foregroundStyle(.blue)
+                    }
+                    Section("Calendar") {
+                        Button { withAnimation(.easeInOut(duration: 0.2)) { appMode = .calendar } } label: { Label("日程日历", systemImage: "calendar").foregroundStyle(.primary) }.buttonStyle(.plain)
+                    }
+                    Section("Memory") { Label("复习", systemImage: "brain.head.profile").tag(SidebarItem.review); Label("知识库", systemImage: "books.vertical").tag(SidebarItem.allList) }
+                    Section("Data") { Label("学习统计", systemImage: "chart.xyaxis.line").tag(SidebarItem.stats); Label("屏幕时间", systemImage: "laptopcomputer").tag(SidebarItem.screenTime) }
                 }
+                .listStyle(.sidebar)
+                .safeAreaInset(edge: .bottom) { SidebarStatsCard() }
+                .navigationTitle("MemoryCat")
+                .toolbar { ToolbarItem(placement: .primaryAction) { Button(action: { showAddSheet = true }) { Label("新建", systemImage: "plus") } } }
                 
-                Section("Memory") {
-                    Label("复习", systemImage: "brain.head.profile").tag(SidebarItem.review)
-                    Label("知识库", systemImage: "books.vertical").tag(SidebarItem.allList)
+            } else {
+                VStack(spacing: 0) {
+                    List {
+                        ForEach(calendarManager.calendarGroups) { group in
+                            Section(group.sourceTitle) {
+                                ForEach(group.calendars, id: \.calendarIdentifier) { calendar in
+                                    CalendarToggleRow(
+                                        calendar: calendar,
+                                        isSelected: Binding(
+                                            get: { calendarManager.visibleCalendarIDs.contains(calendar.calendarIdentifier) },
+                                            set: { _ in calendarManager.toggleCalendar(calendar.calendarIdentifier) }
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.sidebar)
+                    
+                    Divider()
+                    
+                    // ✨ 替换为自定义的极简小日历
+                    MiniCalendarView(currentDate: $calendarCurrentDate)
+                        .padding(.vertical, 16)
+                        .padding(.horizontal, 16)
                 }
-                
-                Section("Data") {
-                    Label("学习统计", systemImage: "chart.xyaxis.line").tag(SidebarItem.stats)
-                    Label("屏幕时间", systemImage: "laptopcomputer").tag(SidebarItem.screenTime)
+                .navigationTitle("Calendar")
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { appMode = .standard } }) { Label("返回", systemImage: "arrow.uturn.backward") }
+                        .help("返回专注模式")
+                    }
                 }
             }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220)
             
-            // 👇👇👇【新增代码】在这里插入底部卡片 👇👇👇
-            .safeAreaInset(edge: .bottom) {
-                SidebarStatsCard()
-            }
-            // 👆👆👆【新增结束】👆👆👆
-            
-            
-            .toolbar {
-                ToolbarItem {
-                    Button(action: { showAddSheet = true }) { Label("新建", systemImage: "plus") }
-                }
-            }
         } detail: {
             ZStack {
-                Color(nsColor: .controlBackgroundColor)
-                    .ignoresSafeArea()
-                
-                switch selection {
-                case .focus: PomodoroView()
-                case .todo: TodoListView()
-                case .review: ReviewSessionView()
-                case .allList: AllItemsListView()
-                case .stats: StatsView()
-                case .screenTime: ScreenTimeView()
-                case .none: Text("请选择左侧菜单")
+                if appMode == .standard {
+                    ZStack {
+                        Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
+                        switch selection {
+                        case .home: HomeDashboardView(tabSelection: $selection)
+                        case .focus: PomodoroView()
+                        case .todo: TodoListView()
+                        case .review: ReviewSessionView()
+                        case .allList: AllItemsListView()
+                        case .stats: StatsView()
+                        case .screenTime: ScreenTimeView()
+                        case .none: Text("请选择左侧菜单")
+                        }
+                    }
+                    .transition(.opacity)
+                } else {
+                    CalendarDetailWrapper(
+                        manager: calendarManager,
+                        editState: eventEditState,
+                        viewMode: $calendarViewMode,
+                        currentDate: $calendarCurrentDate,
+                        todos: todos
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
@@ -85,6 +136,253 @@ struct ContentView: View {
     }
 }
 
+// MARK: - 🎨 美化版日历开关行
+struct CalendarToggleRow: View {
+    let calendar: EKCalendar
+    @Binding var isSelected: Bool
+    
+    var body: some View {
+        Button {
+            isSelected.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(nsColor: NSColor(cgColor: calendar.cgColor) ?? .blue))
+                    if isSelected {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .opacity(isSelected ? 1.0 : 0.4)
+                
+                Text(calendar.title).font(.body).foregroundStyle(.primary)
+            }
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+
+// MARK: - 🗓️ 日历详情页封装 (顶部栏大修)
+struct CalendarDetailWrapper: View {
+    @ObservedObject var manager: CalendarManager
+    @ObservedObject var editState: EventEditState
+    @Binding var viewMode: CalendarViewMode
+    @Binding var currentDate: Date
+    let todos: [TodoItem]
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                // 顶部控制栏 (✨ 去掉了背景色，更干净)
+                HStack(alignment: .center) {
+                    // 左侧标题
+                    VStack(alignment: .leading, spacing: 2) {
+                        if viewMode == .day {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(currentDate.formatted(.dateTime.day()))
+                                    .font(.largeTitle.bold())
+                                    .foregroundStyle(.primary)
+                                Text(currentDate.formatted(.dateTime.weekday(.wide)))
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(currentDate.formatted(.dateTime.month(.wide)))
+                                    .font(.title2.bold())
+                                    .foregroundStyle(.primary)
+                                Text(currentDate.formatted(.dateTime.year()))
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    // ✨ 中间：模式切换 (样式微调)
+                    ModernCalendarModePicker(selection: $viewMode)
+                    
+                    Spacer()
+                    
+                    // ✨ 右侧：翻页按钮 (完全复刻截图样式：圆形箭头 + 胶囊今天)
+                    HStack(spacing: 12) {
+                        Button { moveDate(-1) } label: {
+                            Circle()
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                                .frame(width: 32, height: 32)
+                                .overlay(Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button { currentDate = Date() } label: {
+                            Text("今天")
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button { moveDate(1) } label: {
+                            Circle()
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                                .frame(width: 32, height: 32)
+                                .overlay(Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
+                // ✨ 这里不要背景色了，让它融入整体
+                .overlay(Divider(), alignment: .bottom)
+                
+                // 主内容区
+                ZStack {
+                    Color(nsColor: .textBackgroundColor).ignoresSafeArea()
+                    InteractiveTimelineContainer(
+                        mode: viewMode,
+                        currentDate: currentDate,
+                        events: manager.displayEvents,
+                        todos: todos,
+                        editState: editState,
+                        manager: manager
+                    )
+                }
+            }
+            
+            // 右侧检查器 (保持不变)
+            if editState.selectedEvent != nil || editState.isNewEvent {
+                EventInspectorView(editState: editState, manager: manager)
+                    .frame(width: 320)
+                    .transition(.move(edge: .trailing))
+                    .zIndex(20)
+            }
+        }
+    }
+    
+    private func moveDate(_ v: Int) {
+        let comp: Calendar.Component
+        switch viewMode {
+        case .day: comp = .day
+        case .week: comp = .weekOfYear
+        case .month: comp = .month
+        }
+        currentDate = Calendar.current.date(byAdding: comp, value: v, to: currentDate) ?? currentDate
+    }
+}
+
+
+// MARK: - ✨ 全新：极简小日历 (替代 Sidebar 的 DatePicker)
+struct MiniCalendarView: View {
+    @Binding var currentDate: Date
+    @State private var displayMonth: Date = Date()
+    private let calendar = Calendar.current
+    
+    // 生成网格数据
+    var days: [Date?] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: displayMonth) else { return [] }
+        let monthStart = monthInterval.start
+        
+        let firstWeekDay = calendar.component(.weekday, from: monthStart) // 1=Sun, 2=Mon
+        let offset = firstWeekDay - 1
+        
+        let totalDays = calendar.range(of: .day, in: .month, for: displayMonth)?.count ?? 30
+        
+        var grid: [Date?] = Array(repeating: nil, count: offset)
+        for i in 0..<totalDays {
+            if let date = calendar.date(byAdding: .day, value: i, to: monthStart) {
+                grid.append(date)
+            }
+        }
+        return grid
+    }
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // 1. 标题行 (2025年11月 + 箭头)
+            HStack {
+                Button { changeMonth(-1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                Text(displayMonth.formatted(.dateTime.year().month()))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+                
+                Button { changeMonth(1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 4)
+            
+            // 2. 星期头
+            HStack(spacing: 0) {
+                ForEach(["周日", "周一", "周二", "周三", "周四", "周五", "周六"], id: \.self) { day in
+                    Text(day)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            
+            // 3. 日期网格
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 10) {
+                ForEach(0..<days.count, id: \.self) { index in
+                    if let date = days[index] {
+                        let isSelected = calendar.isDate(date, inSameDayAs: currentDate)
+                        let isToday = calendar.isDateInToday(date)
+                        
+                        Button {
+                            currentDate = date
+                        } label: {
+                            Text("\(calendar.component(.day, from: date))")
+                                .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                                .foregroundStyle(isSelected ? .white : (isToday ? .red : .primary))
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    ZStack {
+                                        if isSelected { Circle().fill(Color.red) }
+                                    }
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Color.clear.frame(height: 26)
+                    }
+                }
+            }
+        }
+        .onAppear { displayMonth = currentDate }
+        .onChange(of: currentDate) { _, newVal in
+            if !calendar.isDate(newVal, equalTo: displayMonth, toGranularity: .month) {
+                displayMonth = newVal
+            }
+        }
+    }
+    
+    func changeMonth(_ val: Int) {
+        displayMonth = calendar.date(byAdding: .month, value: val, to: displayMonth) ?? displayMonth
+    }
+}
+
+
+
+
 // MARK: - 🧠 复习界面 (已升级标签筛选功能 + 美化)
 struct ReviewSessionView: View {
     @Environment(\.modelContext) private var context
@@ -95,7 +393,7 @@ struct ReviewSessionView: View {
     enum SessionState { case idle, active, completed }
     enum ReviewMode: String, CaseIterable {
         case dueToday = "今日到期"
-        case new24h = "新学一遍 (24h)"
+        case new24h = "今日强化"
         case reviewAhead = "提前复习"
     }
     
@@ -348,122 +646,221 @@ struct ReviewSessionView: View {
         }
     }
     
-    // MARK: - 📖 进行中界面 (保持之前的逻辑，微调样式)
+    // MARK: - 📖 进行中界面 (已修复文字跳动 bug + 快捷键逻辑)
     var activeReviewView: some View {
         VStack {
-            // 顶部进度指示器
-            HStack(spacing: 12) {
-                ProgressView(value: Double(currentIndex), total: Double(sessionQueue.count))
-                    .progressViewStyle(.linear)
-                    .tint(.blue)
+            // 1. 顶部进度条 (保持不变)
+            HStack(spacing: 16) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.gray.opacity(0.2)).frame(height: 8)
+                        let total = Double(max(sessionQueue.count, 1))
+                        let current = Double(currentIndex) + (isFlipped ? 1.0 : 0.5)
+                        let width = geo.size.width * CGFloat(current / total)
+                        Capsule()
+                            .fill(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: width, height: 8)
+                            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: current)
+                    }
+                }
+                .frame(height: 8)
                 Text(progressText)
-                    .font(.caption.monospacedDigit())
+                    .font(.system(.callout, design: .monospaced).bold())
                     .foregroundStyle(.secondary)
+                    .frame(width: 60, alignment: .trailing)
             }
-            .frame(width: 300)
+            .frame(width: 450)
+            .padding(.top, 20)
             .padding(.bottom, 30)
             
             if currentIndex < sessionQueue.count {
                 let item = sessionQueue[currentIndex]
                 
-                // 卡片翻转容器
-                ZStack {
-                    // 卡片背景
-                    RoundedRectangle(cornerRadius: 30)
-                        .fill(Color(nsColor: .windowBackgroundColor))
-                        .shadow(color: .black.opacity(0.15), radius: 30, y: 10)
-                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.1), lineWidth: 1))
+                // 👇👇👇 核心变化：左右布局 👇👇👇
+                HStack(alignment: .center, spacing: 40) {
                     
-                    VStack {
-                        // 顶部：标签
-                        HStack {
-                            ForEach(item.tags.prefix(3), id: \.self) { tag in
-                                Text("#\(tag)")
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(.blue.opacity(0.8))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.1))
-                                    .clipShape(Capsule())
+                    // ===========================
+                    // 左侧：卡片区域
+                    // ===========================
+                    ZStack {
+                        // 背景
+                        RoundedRectangle(cornerRadius: 30)
+                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .shadow(color: .black.opacity(0.15), radius: 30, y: 10)
+                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(.white.opacity(0.1), lineWidth: 1))
+                        
+                        VStack(spacing: 0) {
+                            // 顶部标签
+                            HStack {
+                                ForEach(item.tags.prefix(3), id: \.self) { tag in
+                                    Text("#\(tag)")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(.blue.opacity(0.8))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.blue.opacity(0.1))
+                                        .clipShape(Capsule())
+                                }
+                                Spacer()
+                                // 难度提示：根据重复次数变色
+                                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                                    .foregroundStyle(item.repetition > 3 ? .green : .orange)
                             }
-                            Spacer()
-                            // 难度指示器 (假设 item 有 easeFactor)
-                            Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(24)
-                        
-                        Spacer()
-                        
-                        // 中间：内容
-                        VStack(spacing: 24) {
-                            Text(item.content)
-                                .font(.system(size: 28, weight: .medium, design: .rounded))
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal)
+                            .padding(24)
                             
-                            if isFlipped && item.type == .qa {
-                                Rectangle().fill(Color.gray.opacity(0.1)).frame(height: 1).padding(.horizontal, 40)
-                                
-                                Text(item.answer)
-                                    .font(.system(size: 22, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            // 中间内容
+                            // 中间内容
+                            ScrollView(.vertical, showsIndicators: true) {
+                                VStack(alignment: .leading, spacing: 24) {
+                                    
+                                    // 👇 定义一个临时的判断逻辑：
+                                    // 只有当：是QA卡 + 没翻面 + 且内容没有换行符 时，才居中
+                                    let shouldCenter = item.type == .qa && !isFlipped && !item.content.contains("\n")
+                                    
+                                    // 问题 (始终显示)
+                                    SimpleMarkdownView(
+                                        content: item.content,
+                                        alignment: shouldCenter ? .center : .leading
+                                    )
+                                    // Frame 也要跟着变
+                                    .frame(maxWidth: .infinity, alignment: shouldCenter ? .center : .leading)
+                                    // 动画
+                                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: isFlipped)
+                                    
+                                    // 答案 (条件显示)
+                                    if isFlipped && item.type == .qa {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Divider()
+                                            Text("Answer")
+                                                .font(.caption.bold())
+                                                .foregroundStyle(.secondary)
+                                                .padding(.top, 4)
+                                            
+                                            SimpleMarkdownView(content: item.answer, alignment: .leading)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .transition(
+                                            .asymmetric(
+                                                insertion: .move(edge: .top).combined(with: .opacity),
+                                                removal: .opacity
+                                            )
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 30)
+                                .padding(.bottom, 40)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .clipShape(Rectangle())
+                            
+                            // 底部提示文案
+                            if item.type == .qa && !isFlipped {
+                                Text("Space翻面 · ←忘记 · →记得")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.bottom, 24)
+                                    .padding(.top, 10)
+                            } else if item.type == .textOnly {
+                                Text("←忘记 · →记得")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.bottom, 24)
+                                    .padding(.top, 10)
+                            } else {
+                                Color.clear.frame(height: 24).padding(.bottom, 24)
                             }
                         }
-                        
-                        Spacer()
-                        
-                        // 底部：提示
+                    }
+                    .frame(maxWidth: 700, maxHeight: 600)
+                    .contentShape(Rectangle())
+                    // 👇 点击卡片也可以翻面/翻回
+                    .onTapGesture {
+                        if item.type == .qa {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                isFlipped.toggle()
+                            }
+                        }
+                    }
+                    
+                    // ===========================
+                    // 右侧：竖排操作栏
+                    // ===========================
+                    VStack(spacing: 24) {
+                        // 逻辑：如果是 QA 且没翻面，显示眼睛；否则（QA翻面了 或 纯文本）显示打分
                         if item.type == .qa && !isFlipped {
-                            Text("点击卡片查看背面")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .padding(.bottom, 24)
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isFlipped = true }
+                            }) {
+                                VStack(spacing: 12) {
+                                    ZStack {
+                                        Circle().fill(.ultraThinMaterial)
+                                            .frame(width: 70, height: 70)
+                                            .shadow(color: .black.opacity(0.1), radius: 5)
+                                        Image(systemName: "eye.fill").font(.title).foregroundStyle(.primary)
+                                    }
+                                    Text("看答案").font(.caption.bold()).foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help("快捷键：空格")
+                            // ⚠️ 修复：加上 transition 避免切换时闪烁太生硬
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                            
                         } else {
-                            // 占位，保持布局稳定
-                            Color.clear.frame(height: 16).padding(.bottom, 24)
+                            // 1. 记得
+                            FeedbackBtn(icon: "checkmark", title: "记得", color: .green) {
+                                processAnswer(item, remembered: true)
+                            }
+                            .help("快捷键：→")
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            
+                            // 2. 忘记
+                            FeedbackBtn(icon: "xmark", title: "忘记", color: .red) {
+                                processAnswer(item, remembered: false)
+                            }
+                            .help("快捷键：←")
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
                     }
+                    .frame(width: 80)
                 }
-                .frame(maxWidth: 650, maxHeight: 480)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if item.type == .qa { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { isFlipped.toggle() } }
-                }
-                
-                // 底部操作区 (分离式设计)
-                HStack(spacing: 40) {
-                    if item.type == .qa && !isFlipped {
-                        Button(action: { withAnimation(.spring()) { isFlipped = true } }) {
-                            Text("显示答案")
-                                .font(.headline)
-                                .padding(.horizontal, 40)
-                                .padding(.vertical, 14)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                                .shadow(color: .black.opacity(0.05), radius: 5)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        // 忘记按钮
-                        FeedbackBtn(icon: "xmark", title: "忘记", color: .red) {
-                            processAnswer(item, remembered: false)
-                        }
-                        // 记得按钮
-                        FeedbackBtn(icon: "checkmark", title: "记得", color: .green) {
-                            processAnswer(item, remembered: true)
-                        }
-                    }
-                }
-                .padding(.top, 40)
-                .frame(height: 80)
             }
         }
+        // 👇👇👇 修复：将快捷键监听移到最外层，保证 focus 不丢失 👇👇👇
+        .background {
+            // 1. 空格键：翻面 / 翻回
+            Button(action: {
+                if let item = sessionQueue[safe: currentIndex], item.type == .qa {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isFlipped.toggle() // ✅ 修复：支持 toggle，可以翻回去
+                    }
+                }
+            }) { Text("") }
+                .keyboardShortcut(.space, modifiers: [])
+            
+            // 2. 左箭头：忘记
+            Button(action: {
+                if let item = sessionQueue[safe: currentIndex] {
+                    // ✅ 修复：如果是文本卡片，直接允许操作；如果是QA，必须翻面后才允许
+                    if item.type == .textOnly || isFlipped {
+                        processAnswer(item, remembered: false)
+                    }
+                }
+            }) { Text("") }
+                .keyboardShortcut(.leftArrow, modifiers: [])
+            
+            // 3. 右箭头：记得
+            Button(action: {
+                if let item = sessionQueue[safe: currentIndex] {
+                    if item.type == .textOnly || isFlipped {
+                        processAnswer(item, remembered: true)
+                    }
+                }
+            }) { Text("") }
+                .keyboardShortcut(.rightArrow, modifiers: [])
+        }
     }
+    
     
     // MARK: - ✅ 完成界面 (奖章风格)
     var completedView: some View {
@@ -631,28 +1028,48 @@ struct SecondaryBtnStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
     }
 }
-// MARK: - 📚 知识库视图
+// MARK: - 📚 知识库视图 (集成 JSON 导入导出)
 struct AllItemsListView: View {
     @Environment(\.modelContext) var context
-    // 排序默认按创建时间倒序
     @Query(sort: \MemoryItem.createdDate, order: .reverse) var items: [MemoryItem]
     
+    // 状态管理
     @State private var selection = Set<MemoryItem.ID>()
     @State private var searchText = ""
     @State private var selectedTag: String? = nil
     @State private var sortOrder = [KeyPathComparator(\MemoryItem.createdDate, order: .reverse)]
     
-    // 👇 控制编辑弹窗的变量
+    // 视图模式
+    @State private var viewScope: ViewScope = .active
+    
+    enum ViewScope: String, CaseIterable {
+        case active = "活跃知识库"
+        case archived = "归档箱"
+    }
+    
+    // 编辑与文件处理
     @State private var editingItem: MemoryItem?
+    @State private var showFileExporter = false
+    @State private var showFileImporter = false
+    @State private var jsonDocument: JSONDocument?
+    @State private var importCandidate: (name: String, items: [MemoryItemBackup])?
+    @State private var showImportConfig = false
     
     var allTags: [String] { Array(Set(items.flatMap { $0.tags })).sorted() }
     
+    // 筛选逻辑
     var filteredItems: [MemoryItem] {
-        var result = items
+        let scopeItems = items.filter { item in
+            viewScope == .active ? !item.isArchived : item.isArchived
+        }
+        
+        var result = scopeItems
         if let tag = selectedTag { result = result.filter { $0.tags.contains(tag) } }
+        
         if !searchText.isEmpty {
             result = result.filter {
                 $0.content.localizedCaseInsensitiveContains(searchText) ||
+                $0.answer.localizedCaseInsensitiveContains(searchText) ||
                 $0.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
             }
         }
@@ -661,127 +1078,313 @@ struct AllItemsListView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部筛选栏 (保持不变)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
-                    FilterChip(title: "全部", isSelected: selectedTag == nil) { selectedTag = nil }
-                    ForEach(allTags, id: \.self) { tag in
-                        FilterChip(title: tag, isSelected: selectedTag == tag) { selectedTag = tag }
+            
+            // 1. 顶部控制区
+            VStack(spacing: 0) {
+                Picker("视图", selection: $viewScope) {
+                    ForEach(ViewScope.allCases, id: \.self) { scope in
+                        Text(scope.rawValue).tag(scope)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 12)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .onChange(of: viewScope) { _, _ in
+                    selection.removeAll()
+                    selectedTag = nil
+                }
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        FilterChip(title: "全部", isSelected: selectedTag == nil) { selectedTag = nil }
+                        ForEach(allTags, id: \.self) { tag in
+                            FilterChip(title: tag, isSelected: selectedTag == tag) { selectedTag = tag }
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                }
             }
             .background(Color(nsColor: .controlBackgroundColor))
             .overlay(Divider(), alignment: .bottom)
             
-            // 👇👇👇 升级后的表格
-            Table(filteredItems, selection: $selection, sortOrder: $sortOrder) {
-                
-                // 1. 创建日期列
-                TableColumn("创建日期", value: \.createdDate) { item in
-                    Text(item.createdDate.formatted(date: .numeric, time: .omitted))
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle()) // 扩大点击区域
-                        .onTapGesture(count: 2) { editingItem = item } // 双击编辑
+            // 2. 数据表格
+            if filteredItems.isEmpty {
+                ContentUnavailableView {
+                    Label(
+                        viewScope == .active ? "没有相关条目" : "归档箱是空的",
+                        systemImage: viewScope == .active ? "doc.text.magnifyingglass" : "archivebox"
+                    )
+                } description: {
+                    Text(viewScope == .active ? "快去添加一些新知识吧喵！" : "被遗忘的知识会暂时存放在这里。")
                 }
-                .width(min: 80, ideal: 100, max: 100)
-                
-                // 2. 类型列
-                TableColumn("类型", value: \.type.rawValue) { item in
-                    Text(item.type == .qa ? "QA" : "文本")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(item.type == .qa ? Color.blue.opacity(0.1) : Color.orange.opacity(0.1))
-                        .cornerRadius(4)
-                        .onTapGesture(count: 2) { editingItem = item }
-                }
-                .width(50)
-                
-                // 3. 内容列 (只显示Q或Text)
-                TableColumn("内容 / 问题", value: \.content) { item in
-                    HStack {
-                        if item.type == .qa {
-                            Image(systemName: "q.circle.fill").foregroundStyle(.blue.opacity(0.7))
-                        }
-                        Text(item.content)
-                            .lineLimit(1)
-                            .foregroundStyle(.primary)
+                .frame(maxHeight: .infinity)
+            } else {
+                Table(filteredItems, selection: $selection, sortOrder: $sortOrder) {
+                    
+                    TableColumn("创建日期", value: \.createdDate) { item in
+                        Text(item.createdDate.formatted(date: .numeric, time: .omitted))
+                            .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { editingItem = item }
-                }
-                
-                // 4. 记忆进度列 (新增！)
-                TableColumn("记忆进度", value: \.nextReviewDate) { item in
-                    HStack(spacing: 6) {
-                        // 等级图标
-                        if item.repetition == 0 {
-                            Text("🌱 新手").font(.caption).foregroundStyle(.secondary)
-                        } else if item.repetition < 3 {
-                            Text("🪵 入门").font(.caption).foregroundStyle(.orange)
-                        } else if item.repetition < 6 {
-                            Text("🔥 熟练").font(.caption).foregroundStyle(.blue)
-                        } else {
-                            Text("💎 大师").font(.caption).foregroundStyle(.purple)
-                        }
-                        
-                        Spacer()
-                        
-                        // 下次复习时间提示
-                        if item.nextReviewDate <= Date() {
-                            Text("待复习").font(.caption2).bold().foregroundStyle(.red)
-                        } else {
-                            let days = Calendar.current.dateComponents([.day], from: Date(), to: item.nextReviewDate).day ?? 0
-                            Text("\(days)天后").font(.caption2).foregroundStyle(.secondary)
-                        }
+                    .width(min: 80, ideal: 100, max: 100)
+                    
+                    TableColumn("类型", value: \.type.rawValue) { item in
+                        Text(item.type == .qa ? "QA" : "文本")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(item.type == .qa ? Color.blue.opacity(0.1) : Color.orange.opacity(0.1))
+                            .cornerRadius(4)
+                            .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { editingItem = item }
+                    .width(50)
+                    
+                    TableColumn("内容 / 问题", value: \.content) { item in
+                        HStack {
+                            if item.type == .qa {
+                                Image(systemName: "q.circle.fill").foregroundStyle(.blue.opacity(0.7))
+                            }
+                            Text(item.content)
+                                .lineLimit(1)
+                                .foregroundStyle(viewScope == .archived ? .secondary : .primary)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    
+                    TableColumn("记忆进度", value: \.nextReviewDate) { item in
+                        HStack(spacing: 6) {
+                            if item.isArchived {
+                                Text("⏹ 已停止").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                if item.repetition == 0 {
+                                    Text("🌱 新手").font(.caption).foregroundStyle(.secondary)
+                                } else if item.repetition < 3 {
+                                    Text("🪵 入门").font(.caption).foregroundStyle(.orange)
+                                } else {
+                                    Text("💎 大师").font(.caption).foregroundStyle(.purple)
+                                }
+                                Spacer()
+                                if item.nextReviewDate <= Date() {
+                                    Text("待复习").font(.caption2).bold().foregroundStyle(.red)
+                                } else {
+                                    let days = Calendar.current.dateComponents([.day], from: Date(), to: item.nextReviewDate).day ?? 0
+                                    Text("\(days)天后").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .width(min: 100, ideal: 120, max: 150)
+                    
+                    TableColumn("标签") { item in
+                        Text(item.tags.joined(separator: ", "))
+                            .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                    }
                 }
-                .width(min: 100, ideal: 120, max: 150)
-                
-                // 5. 标签列
-                TableColumn("标签") { item in
-                    Text(item.tags.joined(separator: ", "))
-                        .foregroundStyle(.secondary)
-                        .onTapGesture(count: 2) { editingItem = item }
-                }
+                .searchable(text: $searchText, prompt: viewScope == .active ? "搜索知识库..." : "搜索归档...")
             }
-            .searchable(text: $searchText)
             
-            // 底部操作栏 (保持不变)
-            if !selection.isEmpty {
-                HStack {
-                    Text("已选 \(selection.count)")
-                    Spacer()
-                    Button("删除", role: .destructive) { deleteSelected() }
-                }
-                .padding()
-                .background(.ultraThinMaterial)
-            }
+            // 3. 底部操作栏 (这里调用拆分后的子视图)
+            bottomToolBar
         }
-        .navigationTitle("知识库")
-        // 👇 绑定弹窗
-        .sheet(item: $editingItem) { item in
-            EditItemView(item: item)
-        }
+        .navigationTitle(viewScope.rawValue)
+        .sheet(item: $editingItem) { item in EditItemView(item: item) }
         .contextMenu(forSelectionType: MemoryItem.ID.self) { ids in
-            if let id = ids.first, let item = items.first(where: { $0.id == id }) {
-                Button("编辑内容") { editingItem = item }
-                Divider()
-            }
-            Button("删除") { deleteSelected() }
+            contextMenuContent(for: ids)
+        }
+        .fileExporter(isPresented: $showFileExporter, document: jsonDocument, contentType: .json, defaultFilename: "Backup.json") { _ in selection.removeAll() }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.json]) {result in
+            handleFileImport(result)}
+        .sheet(isPresented: $showImportConfig) {
+             if let candidate = importCandidate { ImportConfigView(fileName: candidate.name, items: candidate.items) { performImport(backups: candidate.items, strategy: $0) } }
         }
     }
     
-    func deleteSelected() {
+    // MARK: - 🧩 拆分的视图组件 (解决编译器超时问题)
+    
+    // 底部总工具栏
+    @ViewBuilder
+    var bottomToolBar: some View {
+        HStack {
+            if !selection.isEmpty {
+                selectedActionsView
+            } else {
+                defaultActionsView
+            }
+        }
+        .padding()
+        .background(.ultraThinMaterial)
+        .overlay(Divider(), alignment: .top)
+    }
+    
+    // 选中状态下的按钮组
+    @ViewBuilder
+    var selectedActionsView: some View {
+        Text("已选 \(selection.count) 项")
+            .foregroundStyle(.secondary)
+            .font(.callout)
+        
+        if selection.count == 1 {
+            Button {
+                if let id = selection.first, let item = items.first(where: { $0.id == id }) {
+                    editingItem = item
+                }
+            } label: { Label("编辑", systemImage: "pencil") }
+        }
+        
+        Spacer()
+        
+        // 归档/还原/删除 按钮组
+        archiveOperationsView
+        
+        Button { prepareExport() } label: { Label("导出", systemImage: "square.and.arrow.up") }
+    }
+    
+    // 默认状态下的按钮组
+    @ViewBuilder
+    var defaultActionsView: some View {
+        Button { showFileImporter = true } label: { Label("导入", systemImage: "square.and.arrow.down") }
+        Spacer()
+        Button {
+            selection = Set(filteredItems.map { $0.id })
+            prepareExport()
+        } label: { Label("导出全部", systemImage: "square.and.arrow.up") }
+    }
+    
+    // 归档/还原/删除 逻辑视图
+    @ViewBuilder
+    var archiveOperationsView: some View {
+        if viewScope == .active {
+            Button {
+                toggleArchiveStatus(to: true)
+            } label: {
+                Label("移入归档", systemImage: "archivebox")
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button {
+                toggleArchiveStatus(to: false)
+            } label: {
+                Label("还原", systemImage: "arrow.uturn.backward")
+            }
+            
+            Button(role: .destructive) {
+                deletePermanently()
+            } label: {
+                Label("彻底粉碎", systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+    
+    // 右键菜单内容
+    @ViewBuilder
+    func contextMenuContent(for ids: Set<MemoryItem.ID>) -> some View {
+        let selectedObjects = items.filter { ids.contains($0.id) }
+        
+        if !selectedObjects.isEmpty {
+            if viewScope == .active {
+                Button("移入归档") {
+                    withAnimation {
+                        selectedObjects.forEach { $0.isArchived = true }
+                    }
+                }
+            } else {
+                Button("还原到知识库") {
+                    withAnimation {
+                        selectedObjects.forEach { $0.isArchived = false }
+                    }
+                }
+                Divider()
+                Button("彻底删除", role: .destructive) {
+                    withAnimation {
+                        selectedObjects.forEach { context.delete($0) }
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - 逻辑处理
+    
+    func toggleArchiveStatus(to archived: Bool) {
+        withAnimation(.spring()) {
+            let targets = items.filter { selection.contains($0.id) }
+            targets.forEach { $0.isArchived = archived }
+            selection.removeAll()
+        }
+    }
+    
+    func deletePermanently() {
         withAnimation {
             let toDel = items.filter { selection.contains($0.id) }
             toDel.forEach { context.delete($0) }
             selection.removeAll()
         }
+    }
+    
+    // 主线程执行导出
+    @MainActor
+    func prepareExport() {
+        let targetItems = items.filter { selection.contains($0.id) }
+        guard !targetItems.isEmpty else { return }
+        let backups = targetItems.map { MemoryItemBackup(from: $0) }
+        self.jsonDocument = JSONDocument(items: backups)
+        Task {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            self.showFileExporter = true
+        }
+    }
+    
+    func handleFileImport(_ result: Result<URL, Error>) {
+            switch result {
+            case .success(let url):
+                // 1. 安全访问权限
+                guard url.startAccessingSecurityScopedResource() else { return }
+                defer { url.stopAccessingSecurityScopedResource() }
+                
+                do {
+                    // 2. 直接读取这一个文件
+                    let data = try Data(contentsOf: url)
+                    let decoder = JSONDecoder()
+                    decoder.dateDecodingStrategy = .iso8601
+                    let backups = try decoder.decode([MemoryItemBackup].self, from: data)
+                    
+                    if !backups.isEmpty {
+                        self.importCandidate = (name: url.lastPathComponent, items: backups)
+                        self.showImportConfig = true
+                    }
+                } catch {
+                    print("解析失败: \(error)")
+                }
+            case .failure(let error):
+                print("读取失败: \(error)")
+            }
+        }
+    
+    func performImport(backups: [MemoryItemBackup], strategy: ImportConfigView.ImportStrategy) {
+        var count = 0
+        for backup in backups {
+            var finalTags: [String] = []
+            switch strategy.mode {
+            case .append: finalTags = Array(Set(backup.tags + strategy.tags))
+            case .override: finalTags = strategy.tags
+            case .ignore: finalTags = backup.tags
+            }
+            let newItem = MemoryItem(type: backup.type, content: backup.content, answer: backup.answer, tags: finalTags)
+            newItem.createdDate = backup.createdDate
+            newItem.nextReviewDate = backup.nextReviewDate
+            newItem.repetition = backup.repetition
+            newItem.interval = backup.interval
+            newItem.easeFactor = backup.easeFactor
+            newItem.isArchived = viewScope == .archived // 导入到当前视图模式
+            context.insert(newItem)
+            count += 1
+        }
+        try? context.save()
     }
 }
 // MARK: - 📊 统计视图 (包含今日专注时间)
@@ -1382,58 +1985,323 @@ struct RoundedTextEditor: View {
     }
 }
 
+// MARK: - ✨ 美化后的编辑界面 (最终版)
 struct EditItemView: View {
     @Environment(\.dismiss) var dismiss
-    @Bindable var item: MemoryItem // 使用 @Bindable 直接修改数据
+    @Environment(\.colorScheme) var colorScheme
+    @Bindable var item: MemoryItem
+    
+    // 👇 新增：查询所有现存标签，用于生成选择列表
+    @Query var allItems: [MemoryItem]
     
     @State private var tagString: String = ""
     
+    // 计算所有去重后的标签
+    var existingTags: [String] {
+        Array(Set(allItems.flatMap { $0.tags })).sorted()
+    }
+    
+    // 界面常量
+    private let cardPadding: CGFloat = 20
+    private let cornerRadius: CGFloat = 16
+    
     var body: some View {
-        Form {
-            Section("基本信息") {
+        VStack(spacing: 0) {
+            
+            // 1. 顶部导航栏
+            HStack {
+                Text("编辑卡片")
+                    .font(.title3.bold())
+                    .foregroundStyle(.primary)
+                
+                Spacer()
+                
+                // 类型切换
                 Picker("类型", selection: $item.type) {
                     Text("文本").tag(ItemType.textOnly)
                     Text("Q&A").tag(ItemType.qa)
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(.ultraThinMaterial)
+            .overlay(Divider(), alignment: .bottom)
+            
+            // 2. 内容滚动区
+            ScrollView {
+                VStack(spacing: 24) {
+                    
+                    // ✨ 卡片 A: 核心内容 (合并了问题和答案)
+                    VStack(alignment: .leading, spacing: 0) {
+                        
+                        // 区域 1: 内容/问题
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label(item.type == .qa ? "问题 (Front)" : "内容 (Content)", systemImage: "doc.text.fill")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.blue)
+                                Spacer()
+                            }
+                            EditStyledTextEditor(text: $item.content, minHeight: 120)
+                        }
+                        .padding(cardPadding)
+                        
+                        // 区域 2: 答案 (仅 QA 显示，用分割线连接)
+                        if item.type == .qa {
+                            // 分割线
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.1))
+                                .frame(height: 1)
+                                .padding(.horizontal, cardPadding)
+                            
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    Label("答案 (Back)", systemImage: "lightbulb.fill")
+                                        .font(.subheadline.bold())
+                                        .foregroundStyle(.orange)
+                                    Spacer()
+                                }
+                                
+                                EditStyledTextEditor(text: $item.answer, minHeight: 120)
+                            }
+                            .padding(cardPadding)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .background(cardBackground)
+                    .cornerRadius(cornerRadius)
+                    .shadow(color: shadowColor, radius: 8, y: 4)
+                    
+                    // ✨ 卡片 B: 智能标签管理
+                    VStack(alignment: .leading, spacing: 16) {
+                        Label("标签管理", systemImage: "tag.fill")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.purple)
+                        
+                        // 1. 输入框
+                        HStack {
+                            Image(systemName: "number")
+                                .foregroundStyle(.secondary)
+                            TextField("手动输入标签 (逗号分隔)...", text: $tagString)
+                                .textFieldStyle(.plain)
+                                .onChange(of: tagString) { _, newValue in
+                                    // 手动输入时同步更新 tags 数组
+                                    updateTags(fromString: newValue)
+                                }
+                        }
+                        .padding(10)
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(8)
+                        
+                        Divider()
+                        
+                        // 2. 现有标签云 (点击选择/取消)
+                        if !existingTags.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("快速选择:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                
+                                FlowLayoutView(items: existingTags) { tag in
+                                    TagSelectChip(
+                                        title: tag,
+                                        isSelected: item.tags.contains(tag)
+                                    ) {
+                                        toggleTag(tag)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(cardPadding)
+                    .background(cardBackground)
+                    .cornerRadius(cornerRadius)
+                    .shadow(color: shadowColor, radius: 8, y: 4)
+                    
+                    // ✨ 卡片 C: 数据详情
+                    VStack(alignment: .leading, spacing: 16) {
+                        Label("数据统计", systemImage: "chart.bar.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        
+                        Grid(horizontalSpacing: 24, verticalSpacing: 12) {
+                            GridRow {
+                                InfoCell(title: "创建时间", value: item.createdDate.formatted(date: .numeric, time: .omitted))
+                                InfoCell(title: "下次复习", value: item.nextReviewDate.formatted(date: .numeric, time: .omitted))
+                            }
+                            GridRow {
+                                InfoCell(title: "复习次数", value: "\(item.repetition) 次")
+                                InfoCell(title: "记忆间隔", value: "\(item.interval) 天")
+                            }
+                        }
+                    }
+                    .padding(cardPadding)
+                    .background(cardBackground)
+                    .cornerRadius(cornerRadius)
+                    .shadow(color: shadowColor, radius: 8, y: 4)
+                }
+                .padding(24)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: item.type)
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            
+            // 3. 底部栏
+            HStack {
+                Button("关闭") { dismiss() }
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 
-                TextField("内容 / 问题", text: $item.content, axis: .vertical)
-                    .lineLimit(5...20) // 编辑的时候可以让它更大一点！
-                    .textFieldStyle(.plain) // 加上 plain 样式防止被系统样式压缩
+                Spacer()
                 
-                if item.type == .qa {
-                    Divider()
-                    Text("答案").font(.caption).foregroundStyle(.secondary)
-                    TextField("输入答案", text: $item.answer, axis: .vertical)
-                        .lineLimit(3...8)
+                Button("保存") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(.ultraThinMaterial)
+            .overlay(Divider(), alignment: .top)
+        }
+        .frame(width: 500, height: 650)
+        .onAppear {
+            // 初始化输入框
+            tagString = item.tags.joined(separator: ", ")
+        }
+    }
+    
+    // MARK: - 逻辑处理
+    
+    // 输入框文字 -> tags 数组
+    func updateTags(fromString string: String) {
+        let newTags = string.split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        item.tags = newTags
+    }
+    
+    // 点击标签云 -> tags 数组 + 更新输入框
+    func toggleTag(_ tag: String) {
+        var currentTags = item.tags
+        if currentTags.contains(tag) {
+            currentTags.removeAll { $0 == tag }
+        } else {
+            currentTags.append(tag)
+        }
+        item.tags = currentTags
+        tagString = currentTags.joined(separator: ", ")
+    }
+    
+    // MARK: - 视觉属性
+    var cardBackground: Color {
+        colorScheme == .dark ? Color(nsColor: .controlBackgroundColor) : Color.white
+    }
+    var shadowColor: Color {
+        colorScheme == .dark ? .black.opacity(0.3) : .black.opacity(0.05)
+    }
+}
+
+// MARK: - 🧩 辅助组件
+
+// 1. 简单的流式布局 (用于标签云)
+struct FlowLayoutView<Data: RandomAccessCollection, Content: View>: View where Data.Element: Hashable {
+    let items: Data
+    let content: (Data.Element) -> Content
+    
+    var body: some View {
+        // 使用 Layout 如果是 macOS 13+，这里为了兼容简单写个 wrap
+        // 这里偷懒用一个简单的 ScrollView + HStack 组合，
+        // 如果标签特别多想要自动换行，可以用 LazyVGrid
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(items, id: \.self) { item in
+                    content(item)
                 }
             }
-            
-            Section("标签管理") {
-                TextField("标签 (逗号分隔)", text: $tagString)
-                    .onChange(of: tagString) { _, newValue in
-                        item.tags = newValue.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
-                    }
-            }
-            
-            Section("数据调试 (慎改)") {
-                LabeledContent("创建时间", value: item.createdDate.formatted())
-                LabeledContent("下次复习", value: item.nextReviewDate.formatted())
-                LabeledContent("熟练度 (Rep)", value: "\(item.repetition)")
-            }
-            
-            HStack {
-                Spacer()
-                Button("关闭") { dismiss() }
-            }
-        }
-        .padding()
-        .frame(width: 450, height: 500)
-        .onAppear {
-            tagString = item.tags.joined(separator: ", ")
+            .padding(.vertical, 4) // 给 shadow 留空间
         }
     }
 }
 
+// 2. 可点击的标签 Chip
+struct TagSelectChip: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(isSelected ? Color.blue : Color.gray.opacity(0.1))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? .clear : .gray.opacity(0.2), lineWidth: 1)
+                )
+                .animation(.easeInOut(duration: 0.2), value: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// 3. 复用之前的 TextEditor
+// (如果之前没定义 EditStyledTextEditor，这里再贴一次，防止报错)
+// struct EditStyledTextEditor: View { ... }
+// 👆 刚才的代码里已经有了，就不重复贴了，如果报错找不到就告诉我~
+// 🛠️ 辅助组件：美化版输入框
+struct EditStyledTextEditor: View {
+    @Binding var text: String
+    var minHeight: CGFloat
+    
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty {
+                Text("点击输入...")
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 8)
+            }
+            
+            TextEditor(text: $text)
+                .font(.body)
+                .lineSpacing(4)
+                .scrollContentBackground(.hidden) // 透明背景
+                .background(.clear)
+                .frame(minHeight: minHeight)
+        }
+        .padding(8)
+        .background(Color.gray.opacity(0.05)) // 输入框内部底色
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.gray.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+// 🛠️ 辅助组件：信息单元格
+struct InfoCell: View {
+    let title: String
+    let value: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 
 // 📄 ContentView.swift -> 替换整个 PomodoroView
 
@@ -1754,5 +2622,208 @@ struct ModernReviewPicker: View {
             Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.5) // 极细的高光描边
         )
         .frame(width: 360) // ⭐ 整体宽度限制，稍微紧凑一点
+    }
+}
+
+// MARK: - 📝 简易 Markdown 渲染组件 (修复编译报错版)
+struct SimpleMarkdownView: View {
+    let content: String
+    var alignment: HorizontalAlignment = .leading
+    
+    // 内容块定义
+    enum Block: Identifiable {
+        case text(String)
+        case table(rows: [[String]])
+        var id: UUID { UUID() }
+    }
+    
+    // 解析逻辑
+    var blocks: [Block] {
+        var result: [Block] = []
+        let lines = content.components(separatedBy: "\n")
+        var tableBuffer: [[String]] = []
+        
+        func flushTable() {
+            if !tableBuffer.isEmpty {
+                let validRows = tableBuffer.filter { row in
+                    !row.allSatisfy { cell in
+                        cell.trimmingCharacters(in: CharacterSet(charactersIn: "- ")).isEmpty
+                    }
+                }
+                if !validRows.isEmpty { result.append(.table(rows: validRows)) }
+                tableBuffer = []
+            }
+        }
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("|") && trimmed.hasSuffix("|") {
+                let rowContent = trimmed.dropFirst().dropLast()
+                let cells = rowContent.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                tableBuffer.append(cells)
+            } else {
+                flushTable()
+                result.append(.text(line))
+            }
+        }
+        flushTable()
+        return result
+    }
+    
+    var body: some View {
+        VStack(alignment: alignment, spacing: 10) {
+            ForEach(blocks) { block in
+                switch block {
+                case .text(let line):
+                    renderTextLine(line)
+                case .table(let rows):
+                    renderTable(rows)
+                }
+            }
+        }
+    }
+    
+    // 🎨 渲染普通文本行
+    @ViewBuilder
+    func renderTextLine(_ line: String) -> some View {
+        // 1. 计算缩进 (每2个空格算一级，约等于)
+        let leadingSpacesCount = line.prefix(while: { $0 == " " }).count
+        let indentPadding = CGFloat(leadingSpacesCount) * 7.0
+        
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        
+        if trimmed.hasPrefix("###") {
+            Text(LocalizedStringKey(trimmed.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)))
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .padding(.top, 12)
+                .padding(.leading, indentPadding)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(alignment == .center ? .center : .leading)
+        }
+        else if trimmed.hasPrefix("##") {
+            Text(LocalizedStringKey(trimmed.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .padding(.top, 16)
+                .padding(.leading, indentPadding)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(alignment == .center ? .center : .leading)
+        }
+        else if trimmed.hasPrefix("- ") {
+            HStack(alignment: .top, spacing: 6) {
+                // 👇👇👇 修复点在这里 👇👇👇
+                Text("•")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(.secondary) // 统一用 secondary
+                    .opacity(leadingSpacesCount > 0 ? 0.6 : 1.0) // 通过 opacity 修饰符来改变透明度，不再报错！
+                
+                Text(LocalizedStringKey(trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)))
+                    .font(.system(size: 19, design: .rounded))
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.leading, 8 + indentPadding)
+        }
+        else if !trimmed.isEmpty {
+            Text(LocalizedStringKey(trimmed))
+                .font(.system(size: 19, design: .rounded))
+                .lineSpacing(5)
+                .padding(.leading, indentPadding)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(alignment == .center ? .center : .leading)
+        }
+    }
+    
+    // 📊 渲染表格
+    @ViewBuilder
+    func renderTable(_ rows: [[String]]) -> some View {
+        if let header = rows.first {
+            Grid(horizontalSpacing: 16, verticalSpacing: 12) {
+                GridRow {
+                    ForEach(0..<header.count, id: \.self) { i in
+                        Text(LocalizedStringKey(header[i]))
+                            .font(.system(.body, design: .rounded).bold())
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                Divider()
+                ForEach(rows.dropFirst().indices, id: \.self) { rowIndex in
+                    let row = rows[rowIndex]
+                    GridRow {
+                        ForEach(0..<header.count, id: \.self) { colIndex in
+                            if colIndex < row.count {
+                                Text(LocalizedStringKey(row[colIndex]))
+                                    .font(.system(.callout, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else { Text("") }
+                        }
+                    }
+                    if rowIndex < rows.count - 1 { Divider().opacity(0.3) }
+                }
+            }
+            .padding(16)
+            .background(Color.gray.opacity(0.05))
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.15), lineWidth: 1))
+            .padding(.vertical, 8)
+        }
+    }
+}
+
+
+extension Array {
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
+
+
+// MARK: - 🎨 美化版日历模式切换器 (复刻复习界面的胶囊风格)
+struct ModernCalendarModePicker: View {
+    @Binding var selection: CalendarViewMode
+    @Namespace private var animation
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(CalendarViewMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selection = mode
+                    }
+                } label: {
+                    ZStack {
+                        // 1. 选中背景 (滑块)
+                        if selection == mode {
+                            Capsule()
+                                .fill(Color(nsColor: .controlColor)) // 使用系统控件色，看起来像原生 macOS 控件
+                                .shadow(color: .black.opacity(0.1), radius: 2, y: 1) // 微微的立体感
+                                .matchedGeometryEffect(id: "CalTab", in: animation)
+                        }
+                        
+                        // 2. 文字
+                        Text(mode.rawValue)
+                            .font(.system(size: 13, weight: selection == mode ? .medium : .regular))
+                            .foregroundStyle(selection == mode ? .primary : .secondary)
+                            .fixedSize() // 防止文字换行
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 26) // 高度锁定，小巧精致
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3) // 轨道内边距
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5)) // 轨道背景
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.black.opacity(0.05), lineWidth: 1) // 极细边框
+        )
+        .frame(width: 180) // 🌟 关键：锁死总宽度，防止它变得巨大！
     }
 }

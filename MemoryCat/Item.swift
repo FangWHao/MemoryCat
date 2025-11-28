@@ -51,6 +51,9 @@ final class MemoryItem {
     var repetition: Int
     var easeFactor: Double
     
+    // 归档信息
+    var isArchived: Bool = false
+    
     init(type: ItemType, content: String, answer: String = "", tags: [String] = []) {
         self.id = UUID()
         self.type = type
@@ -64,6 +67,8 @@ final class MemoryItem {
         self.interval = 0
         self.repetition = 0
         self.easeFactor = 2.5
+        
+        self.isArchived = false // 默认为活跃状态
     }
     
     // 核心算法更新：传入 Context 以便保存日志
